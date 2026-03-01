@@ -25,18 +25,25 @@ interface Condiment {
   amountPerUnit: number; // in grams
 }
 
+interface Ingredient {
+  id: string;
+  name: string;
+  packagePrice: number;
+  packageWeight: number; // in grams
+}
+
+interface FlavorIngredientUsage {
+  ingredientId: string;
+  amountPerUnit: number; // in grams
+}
+
 interface Flavor {
   id: string;
   name: string;
   condiments: Condiment[];
+  ingredientUsages: FlavorIngredientUsage[];
   totalBatchWeight: number; // in grams
   unitWeight: number; // in grams
-}
-
-interface Ingredient {
-  id: string;
-  name: string;
-  price: number;
 }
 
 interface Packaging {
@@ -178,6 +185,7 @@ export default function App() {
             {activeTab === 'production' && (
               <ProductionView 
                 flavors={flavors} 
+                ingredients={ingredients}
                 packaging={packaging} 
                 onSaveRecord={(rec) => setHistory([rec, ...history])}
               />
@@ -192,6 +200,7 @@ export default function App() {
               <FlavorsView 
                 flavors={flavors} 
                 setFlavors={setFlavors} 
+                ingredients={ingredients}
               />
             )}
             {activeTab === 'packaging' && (
@@ -223,10 +232,12 @@ export default function App() {
 
 function ProductionView({ 
   flavors, 
+  ingredients,
   packaging, 
   onSaveRecord 
 }: { 
   flavors: Flavor[], 
+  ingredients: Ingredient[],
   packaging: Packaging,
   onSaveRecord: (rec: ProductionRecord) => void
 }) {
@@ -246,18 +257,29 @@ function ProductionView({
     const totalBoxes = Math.floor(totalUnits / 4);
     
     // Cost calculation
-    // Assuming 1 batch uses 1 can of condensed milk and 1 box of cream (common brigadeiro recipe)
+    // Assuming 1 batch uses 1 can of condensed milk and 1 box of cream
     const baseCostPerBatch = condensedMilkPrice + creamPrice;
     
-    // Condiments cost per unit
+    // Condiments cost per unit (defined locally in flavor)
     let condimentsCostPerUnit = 0;
     flavor.condiments.forEach(c => {
       const costPerGram = c.packagePrice / c.packageWeight;
       condimentsCostPerUnit += costPerGram * c.amountPerUnit;
     });
 
-    const totalCondimentsCost = condimentsCostPerUnit * totalUnits;
-    const totalCost = (baseCostPerBatch * batches) + totalCondimentsCost + (packaging.boxPrice * totalBoxes);
+    // Global Ingredients cost per unit (linked to flavor)
+    let ingredientsCostPerUnit = 0;
+    (flavor.ingredientUsages || []).forEach(usage => {
+      const ing = ingredients.find(i => i.id === usage.ingredientId);
+      if (ing && ing.packageWeight > 0) {
+        const costPerGram = ing.packagePrice / ing.packageWeight;
+        ingredientsCostPerUnit += costPerGram * usage.amountPerUnit;
+      }
+    });
+
+    const totalVariableCostPerUnit = condimentsCostPerUnit + ingredientsCostPerUnit;
+    const totalVariableCost = totalVariableCostPerUnit * totalUnits;
+    const totalCost = (baseCostPerBatch * batches) + totalVariableCost + (packaging.boxPrice * totalBoxes);
     
     const costPerBox = totalBoxes > 0 ? totalCost / totalBoxes : 0;
     const grossRevenue = totalBoxes * pricePerBox;
@@ -406,12 +428,19 @@ function ProductionView({
 function IngredientsView({ ingredients, setIngredients }: { ingredients: Ingredient[], setIngredients: any }) {
   const [name, setName] = useState('');
   const [price, setPrice] = useState<number>(0);
+  const [weight, setWeight] = useState<number>(0);
 
   const addIngredient = () => {
-    if (!name || price <= 0) return;
-    setIngredients([...ingredients, { id: Date.now().toString(), name, price }]);
+    if (!name || price <= 0 || weight <= 0) return;
+    setIngredients([...ingredients, { 
+      id: Date.now().toString(), 
+      name, 
+      packagePrice: price, 
+      packageWeight: weight 
+    }]);
     setName('');
     setPrice(0);
+    setWeight(0);
   };
 
   const removeIngredient = (id: string) => {
@@ -422,20 +451,27 @@ function IngredientsView({ ingredients, setIngredients }: { ingredients: Ingredi
     <div className="space-y-6">
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
         <h2 className="text-xl font-bold mb-6 text-primary">Cadastro de Ingredientes</h2>
-        <div className="flex flex-col md:flex-row gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <input 
             type="text" 
             placeholder="Nome do Ingrediente" 
             value={name}
             onChange={e => setName(e.target.value)}
-            className="flex-1 p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-accent"
+            className="md:col-span-1 p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-accent"
           />
           <input 
             type="number" 
-            placeholder="Valor (R$)" 
+            placeholder="Preço Pct (R$)" 
             value={price || ''}
             onChange={e => setPrice(Number(e.target.value))}
-            className="w-full md:w-32 p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-accent"
+            className="p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-accent"
+          />
+          <input 
+            type="number" 
+            placeholder="Peso Pct (g)" 
+            value={weight || ''}
+            onChange={e => setWeight(Number(e.target.value))}
+            className="p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-accent"
           />
           <button 
             onClick={addIngredient}
@@ -451,7 +487,8 @@ function IngredientsView({ ingredients, setIngredients }: { ingredients: Ingredi
           <thead className="bg-stone-50 border-b border-stone-200">
             <tr>
               <th className="px-6 py-4 text-sm font-bold text-stone-600">Ingrediente</th>
-              <th className="px-6 py-4 text-sm font-bold text-stone-600">Valor</th>
+              <th className="px-6 py-4 text-sm font-bold text-stone-600">Preço Pct</th>
+              <th className="px-6 py-4 text-sm font-bold text-stone-600">Peso Pct</th>
               <th className="px-6 py-4 text-sm font-bold text-stone-600 text-right">Ações</th>
             </tr>
           </thead>
@@ -459,7 +496,8 @@ function IngredientsView({ ingredients, setIngredients }: { ingredients: Ingredi
             {ingredients.map(ing => (
               <tr key={ing.id} className="hover:bg-stone-50 transition-colors">
                 <td className="px-6 py-4 font-medium">{ing.name}</td>
-                <td className="px-6 py-4">R$ {ing.price.toFixed(2)}</td>
+                <td className="px-6 py-4">R$ {ing.packagePrice.toFixed(2)}</td>
+                <td className="px-6 py-4">{ing.packageWeight}g</td>
                 <td className="px-6 py-4 text-right">
                   <button 
                     onClick={() => removeIngredient(ing.id)}
@@ -482,17 +520,22 @@ function IngredientsView({ ingredients, setIngredients }: { ingredients: Ingredi
   );
 }
 
-function FlavorsView({ flavors, setFlavors }: { flavors: Flavor[], setFlavors: any }) {
+function FlavorsView({ flavors, setFlavors, ingredients }: { flavors: Flavor[], setFlavors: any, ingredients: Ingredient[] }) {
   const [name, setName] = useState('');
   const [totalBatchWeight, setTotalBatchWeight] = useState<number>(0);
   const [unitWeight, setUnitWeight] = useState<number>(20);
   const [condiments, setCondiments] = useState<Condiment[]>([]);
+  const [ingredientUsages, setIngredientUsages] = useState<FlavorIngredientUsage[]>([]);
   
   // New condiment form
   const [cName, setCName] = useState('');
   const [cPrice, setCPrice] = useState<number>(0);
   const [cWeight, setCWeight] = useState<number>(0);
   const [cUsage, setCUsage] = useState<number>(0);
+
+  // New ingredient usage form
+  const [selectedIngId, setSelectedIngId] = useState('');
+  const [ingUsage, setIngUsage] = useState<number>(0);
 
   const addCondiment = () => {
     if (!cName || cPrice <= 0 || cWeight <= 0 || cUsage <= 0) return;
@@ -506,6 +549,15 @@ function FlavorsView({ flavors, setFlavors }: { flavors: Flavor[], setFlavors: a
     setCName(''); setCPrice(0); setCWeight(0); setCUsage(0);
   };
 
+  const addIngredientUsage = () => {
+    if (!selectedIngId || ingUsage <= 0) return;
+    setIngredientUsages([...ingredientUsages, { 
+      ingredientId: selectedIngId, 
+      amountPerUnit: ingUsage 
+    }]);
+    setSelectedIngId(''); setIngUsage(0);
+  };
+
   const saveFlavor = () => {
     if (!name || totalBatchWeight <= 0 || unitWeight <= 0) return alert('Preencha os campos obrigatórios');
     const newFlavor: Flavor = {
@@ -513,11 +565,12 @@ function FlavorsView({ flavors, setFlavors }: { flavors: Flavor[], setFlavors: a
       name,
       totalBatchWeight,
       unitWeight,
-      condiments
+      condiments,
+      ingredientUsages
     };
     setFlavors([...flavors, newFlavor]);
     // Reset form
-    setName(''); setTotalBatchWeight(0); setUnitWeight(20); setCondiments([]);
+    setName(''); setTotalBatchWeight(0); setUnitWeight(20); setCondiments([]); setIngredientUsages([]);
   };
 
   const removeFlavor = (id: string) => {
@@ -560,6 +613,53 @@ function FlavorsView({ flavors, setFlavors }: { flavors: Flavor[], setFlavors: a
               className="w-full p-3 rounded-xl border border-stone-200 outline-none focus:ring-2 focus:ring-accent"
             />
           </div>
+        </div>
+
+        <div className="border-t pt-6">
+          <h3 className="text-md font-bold mb-4 text-stone-700">Ingredientes da Base (da aba Ingredientes)</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mb-4">
+            <select 
+              value={selectedIngId} 
+              onChange={e => setSelectedIngId(e.target.value)}
+              className="p-2 rounded-lg border border-stone-200 bg-white"
+            >
+              <option value="">Selecione um ingrediente</option>
+              {ingredients.map(ing => (
+                <option key={ing.id} value={ing.id}>{ing.name}</option>
+              ))}
+            </select>
+            <input 
+              type="number" 
+              placeholder="Uso por Unidade (g)" 
+              value={ingUsage || ''} 
+              onChange={e => setIngUsage(Number(e.target.value))} 
+              className="p-2 rounded-lg border border-stone-200" 
+            />
+            <button 
+              onClick={addIngredientUsage}
+              className="bg-stone-100 text-stone-600 py-2 rounded-lg font-bold hover:bg-stone-200 transition-all"
+            >
+              + Adicionar
+            </button>
+          </div>
+
+          {ingredientUsages.length > 0 && (
+            <div className="bg-stone-50 p-4 rounded-xl mb-6">
+              <ul className="space-y-2">
+                {ingredientUsages.map((usage, idx) => {
+                  const ing = ingredients.find(i => i.id === usage.ingredientId);
+                  return (
+                    <li key={idx} className="flex justify-between text-sm">
+                      <span>{ing?.name} ({usage.amountPerUnit}g/un)</span>
+                      <span className="font-bold">
+                        R$ {ing ? (ing.packagePrice / ing.packageWeight * usage.amountPerUnit).toFixed(2) : '0.00'}/un
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="border-t pt-6">
